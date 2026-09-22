@@ -1,0 +1,12 @@
+name: astrbot_plugin_week
+display_name: 信息源与周报提醒
+author: week
+desc: 聚合 RSS、博客和 GitHub 信息源，定时推送摘要并提醒填写周报。
+version: 1.0.0
+short_desc: 自定义信息源、定时摘要、周报网址提醒。
+astrbot_version: ">=4.0"
+support_platforms:
+  - aiocqhttp
+  - telegram
+  - lark
+  - wecom

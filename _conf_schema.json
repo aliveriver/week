@@ -1,0 +1,80 @@
+{
+  "enabled": {
+    "type": "bool",
+    "description": "启用定时任务",
+    "default": true
+  },
+  "period": {
+    "type": "string",
+    "description": "抓取和提醒周期",
+    "options": ["daily", "weekly", "interval"],
+    "default": "weekly",
+    "hint": "daily=每天，weekly=每周，interval=按间隔小时。"
+  },
+  "time": {
+    "type": "string",
+    "description": "每天/每周发送时间",
+    "default": "09:00",
+    "hint": "使用本机时区，格式 HH:MM。"
+  },
+  "weekday": {
+    "type": "int",
+    "description": "每周发送日",
+    "default": 1,
+    "hint": "1=周一，7=周日。仅 weekly 生效。"
+  },
+  "interval_hours": {
+    "type": "int",
+    "description": "自定义间隔小时数",
+    "default": 168,
+    "hint": "仅 interval 生效，最小 1 小时。"
+  },
+  "max_items": {
+    "type": "int",
+    "description": "每次最多推送条目数",
+    "default": 10
+  },
+  "request_timeout": {
+    "type": "int",
+    "description": "抓取超时时间（秒）",
+    "default": 20
+  },
+  "report_url": {
+    "type": "string",
+    "description": "周报填写网址",
+    "default": "https://docs.qq.com/sheet/DWGxaamhOa09rdXJW?tab=pazfci&login_t=1790075799166"
+  },
+  "sources": {
+    "type": "template_list",
+    "description": "默认信息源",
+    "templates": {
+      "rss": {
+        "name": "RSS / Atom",
+        "display_item": "name",
+        "items": {
+          "name": {"type": "string", "description": "名称", "default": ""},
+          "url": {"type": "string", "description": "Feed 地址", "default": ""},
+          "enabled": {"type": "bool", "description": "启用", "default": true}
+        }
+      },
+      "blog": {
+        "name": "博客网页",
+        "display_item": "name",
+        "items": {
+          "name": {"type": "string", "description": "名称", "default": ""},
+          "url": {"type": "string", "description": "博客地址", "default": ""},
+          "enabled": {"type": "bool", "description": "启用", "default": true}
+        }
+      },
+      "github": {
+        "name": "GitHub 仓库",
+        "display_item": "name",
+        "items": {
+          "name": {"type": "string", "description": "名称", "default": ""},
+          "url": {"type": "string", "description": "仓库地址", "default": ""},
+          "enabled": {"type": "bool", "description": "启用", "default": true}
+        }
+      }
+    }
+  }
+}
