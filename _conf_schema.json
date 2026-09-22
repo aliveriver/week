@@ -74,6 +74,16 @@
           "url": {"type": "string", "description": "仓库地址", "default": ""},
           "enabled": {"type": "bool", "description": "启用", "default": true}
         }
+      },
+      "github_user": {
+        "name": "GitHub 用户活跃度",
+        "display_item": "name",
+        "hint": "填写用户主页，例如 https://github.com/torvalds。",
+        "items": {
+          "name": {"type": "string", "description": "名称", "default": ""},
+          "url": {"type": "string", "description": "用户主页或用户名", "default": ""},
+          "enabled": {"type": "bool", "description": "启用", "default": true}
+        }
       }
     }
   }

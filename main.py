@@ -22,7 +22,7 @@ from astrbot.api.star import Context, Star, register
 REPORT_URL = (
     "https://docs.qq.com/sheet/DWGxaamhOa09rdXJW?tab=pazfci&login_t=1790075799166"
 )
-SOURCE_TYPES = {"rss", "blog", "github"}
+SOURCE_TYPES = {"rss", "blog", "github", "github_user"}
 
 
 @register(
@@ -128,6 +128,16 @@ class WeekPlugin(Star):
             )
         if kind == "github":
             return await self._fetch_github(session, source)
+        if kind == "github_user":
+            activity = await self._github_user_activity(session, self._github_username(url))
+            if not activity:
+                return []
+            date_key = datetime.now().date().isoformat()
+            return [{
+                "title": self._format_github_activity(activity),
+                "url": f"https://github.com/{activity['login']}?activity={date_key}",
+                "source": source["name"],
+            }]
         return self._parse_blog(
             await self._fetch_text(session, url), source["name"], url
         )
@@ -201,6 +211,78 @@ class WeekPlugin(Star):
             if item.get("html_url")
         ]
 
+    @staticmethod
+    def _github_username(value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.netloc.lower() == "github.com":
+            return parsed.path.strip("/").split("/")[0]
+        return value.strip().strip("/").split("/")[0]
+
+    async def _github_user_activity(
+        self, session: aiohttp.ClientSession, username: str, days: int = 30
+    ) -> dict[str, Any] | None:
+        """Summarize public GitHub events for a user (GitHub retains events for ~90 days)."""
+        username = self._github_username(username)
+        if not re.fullmatch(r"[A-Za-z0-9-]+", username):
+            return None
+        try:
+            profile = json.loads(await self._fetch_text(session, f"https://api.github.com/users/{username}"))
+            events = json.loads(await self._fetch_text(session, f"https://api.github.com/users/{username}/events/public?per_page=100"))
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError):
+            return None
+        if not isinstance(profile, dict) or not isinstance(events, list):
+            return None
+        cutoff = datetime.now().astimezone() - timedelta(days=max(1, min(90, days)))
+        counts = {"commits": 0, "pull_requests": 0, "issues": 0, "reviews": 0, "comments": 0}
+        repositories: set[str] = set()
+        latest: str | None = None
+        for event in events:
+            created = str(event.get("created_at", ""))
+            try:
+                when = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if when < cutoff:
+                continue
+            latest = created if latest is None or created > latest else latest
+            repo_name = (event.get("repo") or {}).get("name")
+            if repo_name:
+                repositories.add(str(repo_name))
+            event_type = event.get("type")
+            payload = event.get("payload") or {}
+            if event_type == "PushEvent":
+                counts["commits"] += len(payload.get("commits") or [])
+            elif event_type == "PullRequestEvent":
+                counts["pull_requests"] += 1
+            elif event_type == "IssuesEvent":
+                counts["issues"] += 1
+            elif event_type == "PullRequestReviewEvent":
+                counts["reviews"] += 1
+            elif event_type in {"IssueCommentEvent", "CommitCommentEvent"}:
+                counts["comments"] += 1
+        score = counts["commits"] + counts["pull_requests"] * 3 + counts["issues"] * 2 + counts["reviews"] * 2 + counts["comments"]
+        return {
+            "login": profile.get("login", username),
+            "name": profile.get("name") or profile.get("login", username),
+            "public_repos": profile.get("public_repos", 0),
+            "followers": profile.get("followers", 0),
+            "counts": counts,
+            "repositories": sorted(repositories),
+            "latest": latest,
+            "days": max(1, min(90, days)),
+            "score": score,
+        }
+
+    @staticmethod
+    def _format_github_activity(activity: dict[str, Any]) -> str:
+        counts = activity["counts"]
+        return (
+            f"GitHub 用户 {activity['name']}（{activity['login']}）近 {activity['days']} 天："
+            f"活跃度 {activity['score']}，提交 {counts['commits']}，PR {counts['pull_requests']}，"
+            f"Issue {counts['issues']}，Review {counts['reviews']}，评论 {counts['comments']}，"
+            f"活跃仓库 {len(activity['repositories'])} 个"
+        )
+
     async def _collect_new_items(self) -> list[dict[str, str]]:
         found: list[dict[str, str]] = []
         async with aiohttp.ClientSession() as session:
@@ -234,7 +316,7 @@ class WeekPlugin(Star):
         lines.extend(["", f"请填写周报：{self.config.get('report_url') or REPORT_URL}"])
         return "\n".join(lines)
 
-    async def _run_cycle(self) -> tuple[int, int]:
+    async def _run_cycle(self, extra_targets: list[str] | None = None) -> tuple[int, int]:
         items = await self._collect_new_items()
         self._state["last_run"] = datetime.now().isoformat(timespec="seconds")
         self._save_state()
@@ -245,7 +327,8 @@ class WeekPlugin(Star):
         ][-3:]
         message = self._format_report([*manual_items, *items], scheduled=True)
         sent = 0
-        for target in list(dict.fromkeys(self._state.get("sessions", []))):
+        targets = list(dict.fromkeys([*self._state.get("sessions", []), *(extra_targets or [])]))
+        for target in targets:
             try:
                 if await self.context.send_message(
                     target, MessageChain().message(message)
@@ -293,7 +376,7 @@ class WeekPlugin(Star):
     @filter.command("week_help")
     async def week_help(self, event: AstrMessageEvent):
         yield event.plain_result(
-            "/week_subscribe 订阅提醒\n/week_unsubscribe 取消订阅\n/week_sources 查看来源\n/week_add_source 名称 rss|blog|github URL\n/week_del_source 名称\n/week_add_item 标题 URL [备注]\n/week_items 查看自定义条目\n/week_fetch 立即抓取\n/week_report 立即发送周报\n/week_help 查看帮助"
+            "/week_subscribe 订阅提醒\n/week_unsubscribe 取消订阅\n/week_sources 查看来源\n/week_add_source 名称 rss|blog|github|github_user URL\n/week_github_user 用户名 [天数]\n/week_del_source 名称\n/week_add_item 标题 URL [备注]\n/week_items 查看自定义条目\n/week_fetch 立即抓取\n/week_publish 立即发布测试\n/week_report 查看当前周报\n/week_help 查看帮助"
         )
 
     @filter.command("week_subscribe")
@@ -390,6 +473,47 @@ class WeekPlugin(Star):
         items = await self._collect_new_items()
         self._save_state()
         yield event.plain_result(self._format_report(items))
+
+    @filter.command("week_publish", alias={"week_publish_now", "week_test"})
+    async def week_publish(self, event: AstrMessageEvent):
+        """立即抓取并发布一次，用于测试定时推送链路。"""
+        item_count, sent_count = await self._run_cycle(
+            extra_targets=[event.unified_msg_origin]
+        )
+        yield event.plain_result(
+            f"立即发布测试完成：发现 {item_count} 条新信息，已发送到 {sent_count} 个会话。"
+        )
+
+    @filter.command("week_github_user")
+    async def week_github_user(self, event: AstrMessageEvent):
+        """查询 GitHub 用户在最近一段时间内的公开活跃度。"""
+        args = self._parse_args(event.message_str)[1:]
+        if not args:
+            yield event.plain_result("用法：/week_github_user 用户名 [天数]\n例如：/week_github_user torvalds 30")
+            return
+        try:
+            days = int(args[1]) if len(args) > 1 else 30
+        except ValueError:
+            days = 30
+        async with aiohttp.ClientSession() as session:
+            activity = await self._github_user_activity(session, args[0], days)
+        if not activity:
+            yield event.plain_result("无法获取该 GitHub 用户。请确认用户名正确，或稍后重试（GitHub API 可能触发限流）。")
+            return
+        counts = activity["counts"]
+        repos = "、".join(activity["repositories"][:8]) or "无"
+        latest = activity["latest"] or "暂无"
+        yield event.plain_result(
+            f"GitHub 用户活跃度：{activity['name']} (@{activity['login']})\n"
+            f"统计窗口：最近 {activity['days']} 天\n"
+            f"活跃度分数：{activity['score']}\n"
+            f"提交：{counts['commits']}，PR：{counts['pull_requests']}，Issue：{counts['issues']}\n"
+            f"Review：{counts['reviews']}，评论：{counts['comments']}\n"
+            f"活跃仓库：{len(activity['repositories'])} 个（{repos}）\n"
+            f"公开仓库：{activity['public_repos']}，Followers：{activity['followers']}\n"
+            f"最近活动：{latest}\n"
+            f"主页：https://github.com/{activity['login']}"
+        )
 
     @filter.command("week_report")
     async def week_report(self, event: AstrMessageEvent):
